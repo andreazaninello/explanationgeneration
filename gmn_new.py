@@ -576,89 +576,91 @@ def load_esnli_data_from_hf(split: str, num_samples: Optional[int] = None) -> Li
 # Example usage
 # Example usage
 if __name__ == "__main__":
+    samples = [500] #[10, 100, 500]
     base_output_directory = "generations" # Or your preferred name
     os.makedirs(base_output_directory, exist_ok=True)
 
-    # Load data once, outside the model loop
-    logger.info("Loading dataset splits...")
-    # Using very small numbers for quick testing. Increase for actual runs.
-    train_examples_subset = load_esnli_data_from_hf(split="train", num_samples=5) # Reduced for faster test
-    test_examples_subset = load_esnli_data_from_hf(split="test", num_samples=3)   # Reduced for faster test
-    unlabeled_examples_subset = load_esnli_data_from_hf(split="validation", num_samples=5) # Reduced
+    for num_samples in samples:
+        # Load data once, outside the model loop
+        logger.info("Loading dataset splits...")
+        # Using very small numbers for quick testing. Increase for actual runs.
+        train_examples_subset = load_esnli_data_from_hf(split="train", num_samples=num_samples) # Reduced for faster test
+        test_examples_subset = load_esnli_data_from_hf(split="test", num_samples=num_samples//2)   # Reduced for faster test
+        unlabeled_examples_subset = load_esnli_data_from_hf(split="validation", num_samples=num_samples//2) # Reduced
 
-    if not train_examples_subset or not test_examples_subset:
-        logger.error("Not enough data to run example. Exiting.")
-        exit()
+        if not train_examples_subset or not test_examples_subset:
+            logger.error("Not enough data to run example. Exiting.")
+            exit()
 
-    models_to_run_config = [
-        {"name": "facebook/bart-base", "short_name": "bart-base"}, # Added BART back for completeness
-        #{"name": "google-t5/t5-small", "short_name": "t5-small"},      # Changed to t5-small for faster testing
-        #{"name": "google/pegasus-cnn_dailymail", "short_name": "pegasus-cnn_dailymail"}, # Smaller pegasus
-        {"name": "google-t5/t5-base", "short_name": "t5-base"}, # Uncomment to use t5-base
-        {"name": "google/pegasus-xsum", "short_name": "pegasus-xsum"}, # Uncomment for XSUM variant
-    ]
+        models_to_run_config = [
+            {"name": "facebook/bart-base", "short_name": "bart-base"}, # Added BART back for completeness
+            #{"name": "google-t5/t5-small", "short_name": "t5-small"},      # Changed to t5-small for faster testing
+            #{"name": "google/pegasus-cnn_dailymail", "short_name": "pegasus-cnn_dailymail"}, # Smaller pegasus
+            {"name": "google-t5/t5-base", "short_name": "t5-base"}, # Uncomment to use t5-base
+            {"name": "google/pegasus-xsum", "short_name": "pegasus-xsum"}, # Uncomment for XSUM variant
+        ]
 
-    for model_config in models_to_run_config: # Iterate through the defined model configurations
-        model_name = model_config["name"]
-        model_short_name = model_config["short_name"]
-        
-        logger.info(f"\n\n{'='*25} RUNNING EXPERIMENTS FOR MODEL: {model_name} ({model_short_name}) {'='*25}")
-        
-        model_specific_output_dir = os.path.join(base_output_directory, model_short_name)
-        # os.makedirs(model_specific_output_dir, exist_ok=True) # This is already done in ExplanationGenerator constructor
-
-        try:
-            # Instantiate generator for the current model
-            generator = ExplanationGenerator(model_name=model_name, output_dir=model_specific_output_dir)
+        for model_config in models_to_run_config: # Iterate through the defined model configurations
+            model_name = model_config["name"]
+            model_short_name = model_config["short_name"]
             
-            # --- Run Method 1: Unsupervised ---
-            logger.info(f"\n--- Method 1: UNSUPERVISED for {model_name} ---")
-            unsupervised_results = generator.method1_unsupervised(test_examples_subset)
-            if unsupervised_results and test_examples_subset and unsupervised_results.get("null_prompt"): # Check if list not empty
-                logger.info(f"M1 results for {model_name} (first ex, null_prompt): {unsupervised_results['null_prompt'][0]}")
+            logger.info(f"\n\n{'='*25} RUNNING EXPERIMENTS FOR MODEL: {model_name} ({model_short_name}) {'='*25}")
+            
+            model_specific_output_dir = os.path.join(base_output_directory, f"{num_samples}", model_short_name)
+            # os.makedirs(model_specific_output_dir, exist_ok=True) # This is already done in ExplanationGenerator constructor
 
-            # --- Run Method 2: Fine-tuning ---
-            # Re-initialize generator to ensure it starts from the base pre-trained model for this method's specific fine-tuning
-            generator_m2 = ExplanationGenerator(model_name=model_name, output_dir=model_specific_output_dir)
-            logger.info(f"\n--- Method 2: FINE-TUNING for {model_name} ---")
-            if unlabeled_examples_subset:
-                finetuning_results = generator_m2.method2_fine_tuning(
-                    train_examples_subset, unlabeled_examples_subset, test_examples_subset,
-                    num_epochs=1, batch_size=1 # Even smaller batch for large models if memory is tight
-                )
-                if finetuning_results and test_examples_subset and finetuning_results.get("null_prompt"): # Check if list not empty
-                    logger.info(f"M2 results for {model_name} (first ex, null_prompt): {finetuning_results['null_prompt'][0]}")
-            else:
-                logger.warning(f"Skipping Method 2 for {model_name} due to lack of unlabeled data.")
+            try:
+                # Instantiate generator for the current model
+                generator = ExplanationGenerator(model_name=model_name, output_dir=model_specific_output_dir)
+                
+                # --- Run Method 1: Unsupervised ---
+                logger.info(f"\n--- Method 1: UNSUPERVISED for {model_name} ---")
+                unsupervised_results = generator.method1_unsupervised(test_examples_subset)
+                if unsupervised_results and test_examples_subset and unsupervised_results.get("null_prompt"): # Check if list not empty
+                    logger.info(f"M1 results for {model_name} (first ex, null_prompt): {unsupervised_results['null_prompt'][0]}")
 
-            # --- Run Method 3: Ensembling ---
-            # Re-initialize for method 3 to ensure M0 is fresh.
-            generator_m3 = ExplanationGenerator(model_name=model_name, output_dir=model_specific_output_dir)
-            logger.info(f"\n--- Method 3: ENSEMBLING for {model_name} ---")
-            if unlabeled_examples_subset and len(unlabeled_examples_subset) >= 5:
-                 ensemble_results = generator_m3.method3_ensembling(
-                    train_examples_subset, unlabeled_examples_subset, test_examples_subset,
-                    num_epochs=1, batch_size=1 # Even smaller batch
-                )
-                 if ensemble_results and test_examples_subset: # Check if list not empty
-                    logger.info(f"M3 results for {model_name} (first ex): {ensemble_results[0]}")
-            else:
-                logger.warning(f"Skipping Method 3 for {model_name} due to insufficient unlabeled data for ensembling (need at least 5).")
+                # --- Run Method 2: Fine-tuning ---
+                # Re-initialize generator to ensure it starts from the base pre-trained model for this method's specific fine-tuning
+                generator_m2 = ExplanationGenerator(model_name=model_name, output_dir=model_specific_output_dir)
+                logger.info(f"\n--- Method 2: FINE-TUNING for {model_name} ---")
+                if unlabeled_examples_subset:
+                    finetuning_results = generator_m2.method2_fine_tuning(
+                        train_examples_subset, unlabeled_examples_subset, test_examples_subset,
+                        num_epochs=1, batch_size=1 # Even smaller batch for large models if memory is tight
+                    )
+                    if finetuning_results and test_examples_subset and finetuning_results.get("null_prompt"): # Check if list not empty
+                        logger.info(f"M2 results for {model_name} (first ex, null_prompt): {finetuning_results['null_prompt'][0]}")
+                else:
+                    logger.warning(f"Skipping Method 2 for {model_name} due to lack of unlabeled data.")
 
-        except Exception as e:
-            logger.error(f"Error during experiments for model {model_name}: {e}", exc_info=True)
-            logger.error(f"Skipping remaining methods for {model_name} and moving to next model if any.")
+                # --- Run Method 3: Ensembling ---
+                # Re-initialize for method 3 to ensure M0 is fresh.
+                generator_m3 = ExplanationGenerator(model_name=model_name, output_dir=model_specific_output_dir)
+                logger.info(f"\n--- Method 3: ENSEMBLING for {model_name} ---")
+                if unlabeled_examples_subset and len(unlabeled_examples_subset) >= 5:
+                    ensemble_results = generator_m3.method3_ensembling(
+                        train_examples_subset, unlabeled_examples_subset, test_examples_subset,
+                        num_epochs=1, batch_size=1 # Even smaller batch
+                    )
+                    if ensemble_results and test_examples_subset: # Check if list not empty
+                        logger.info(f"M3 results for {model_name} (first ex): {ensemble_results[0]}")
+                else:
+                    logger.warning(f"Skipping Method 3 for {model_name} due to insufficient unlabeled data for ensembling (need at least 5).")
+
+            except Exception as e:
+                logger.error(f"Error during experiments for model {model_name}: {e}", exc_info=True)
+                logger.error(f"Skipping remaining methods for {model_name} and moving to next model if any.")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                continue
+
+            # Clear GPU memory if on CUDA after each model successfully processes
             if torch.cuda.is_available():
+                # Ensure generators are deleted if they were created
+                if 'generator' in locals(): del generator
+                if 'generator_m2' in locals(): del generator_m2
+                if 'generator_m3' in locals(): del generator_m3
                 torch.cuda.empty_cache()
-            continue
+                logger.info(f"Cleared CUDA cache after processing model {model_name}")
 
-        # Clear GPU memory if on CUDA after each model successfully processes
-        if torch.cuda.is_available():
-            # Ensure generators are deleted if they were created
-            if 'generator' in locals(): del generator
-            if 'generator_m2' in locals(): del generator_m2
-            if 'generator_m3' in locals(): del generator_m3
-            torch.cuda.empty_cache()
-            logger.info(f"Cleared CUDA cache after processing model {model_name}")
-
-    print(f"\nAll model experiment runs completed. Check the '{base_output_directory}' directory for saved generations.")
+        print(f"\nAll model experiment runs completed. Check the '{base_output_directory}' directory for saved generations.")
